@@ -7,11 +7,90 @@ local CoreGui = game:GetService("CoreGui")
 
 local LP = Players.LocalPlayer
 
+UI.ClickSoundsEnabled = false
+
+local refreshers = {}
+local accentRegistry = {}
+
 local function corner(obj, radius)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, radius or 12)
     c.Parent = obj
     return c
+end
+
+function UI.RegisterRefresher(fn)
+    table.insert(refreshers, fn)
+    return fn
+end
+
+function UI.RefreshAll()
+    for i = #refreshers, 1, -1 do
+        local fn = refreshers[i]
+        if type(fn) == "function" then
+            pcall(fn)
+        else
+            table.remove(refreshers, i)
+        end
+    end
+end
+
+function UI.TrackAccent(obj, property)
+    if obj and property then
+        table.insert(accentRegistry, {obj = obj, prop = property})
+    end
+end
+
+function UI.SetAccent(color)
+    for i = #accentRegistry, 1, -1 do
+        local item = accentRegistry[i]
+        if not item.obj or not item.obj.Parent then
+            table.remove(accentRegistry, i)
+        else
+            pcall(function()
+                item.obj[item.prop] = color
+            end)
+        end
+    end
+end
+
+function UI.ApplyTitleGradient(textLabel, enabled)
+    local grad = textLabel:FindFirstChildOfClass("UIGradient")
+    if enabled then
+        if not grad then
+            grad = Instance.new("UIGradient")
+            grad.Parent = textLabel
+        end
+        grad.Rotation = 0
+        grad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(180,140,255)),
+        })
+    else
+        if grad then grad:Destroy() end
+    end
+end
+
+function UI.PlayClickSound(parent, enabled)
+    if not enabled then return end
+    local s = Instance.new("Sound")
+    s.Parent = parent
+    s.SoundId = "rbxassetid://12222124"
+    s.Volume = 0.35
+    s.PlayOnRemove = true
+    s:Destroy()
+end
+
+function UI.AnimateTab(button, state, theme)
+    if state then
+        TweenService:Create(button, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = Color3.fromRGB(22, 17, 40)
+        }):Play()
+    else
+        TweenService:Create(button, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = theme.Card
+        }):Play()
+    end
 end
 
 function UI.CreateWindow(theme, opts)
@@ -24,6 +103,22 @@ function UI.CreateWindow(theme, opts)
     gui.DisplayOrder = 9999
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Parent = CoreGui
+
+    local notifHolder = Instance.new("Frame")
+    notifHolder.Name = "NotifHolder"
+    notifHolder.Parent = gui
+    notifHolder.AnchorPoint = Vector2.new(1, 1)
+    notifHolder.Position = UDim2.new(1, -16, 1, -16)
+    notifHolder.Size = UDim2.new(0, 320, 1, -32)
+    notifHolder.BackgroundTransparency = 1
+    notifHolder.ZIndex = 1000
+    notifHolder:SetAttribute("notifId", 0)
+
+    local notifLayout = Instance.new("UIListLayout", notifHolder)
+    notifLayout.Padding = UDim.new(0, 8)
+    notifLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    notifLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    notifLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
     local backdrop = Instance.new("Frame")
     backdrop.Name = "Backdrop"
@@ -48,11 +143,15 @@ function UI.CreateWindow(theme, opts)
     main.Size = UDim2.new(0, 860, 0, 560)
     main.Position = UDim2.new(0.5, -430, 0.5, -280)
     main.BackgroundColor3 = Color3.fromRGB(12, 11, 22)
+    main.BackgroundTransparency = 0.02
     main.BorderSizePixel = 0
     main.Visible = false
     main.ClipsDescendants = true
     main.ZIndex = 10
     corner(main, 16)
+
+    local mainScale = Instance.new("UIScale", main)
+    mainScale.Scale = 1
 
     local mainStroke = Instance.new("UIStroke", main)
     mainStroke.Color = theme.Accent
@@ -69,6 +168,7 @@ function UI.CreateWindow(theme, opts)
     local sidebar = Instance.new("Frame", main)
     sidebar.Size = UDim2.new(0, 190, 1, 0)
     sidebar.BackgroundColor3 = Color3.fromRGB(11, 10, 21)
+    sidebar.BackgroundTransparency = 0.02
     sidebar.BorderSizePixel = 0
     sidebar.ZIndex = 11
 
@@ -188,8 +288,10 @@ function UI.CreateWindow(theme, opts)
 
     local api = {
         ScreenGui = gui,
+        NotifHolder = notifHolder,
         Backdrop = backdrop,
         Main = main,
+        MainScale = mainScale,
         Sidebar = sidebar,
         TabList = tabList,
         Content = content,
@@ -218,7 +320,6 @@ function UI.CreateWindow(theme, opts)
         gui:Destroy()
     end
 
-    -- drag only while menu open
     do
         local dragging = false
         local dragStart
@@ -269,11 +370,15 @@ function UI.CreatePage(parent)
     page.Position = UDim2.new(0, 0, 0, 64)
     page.Size = UDim2.new(1, 0, 1, -64)
     page.ScrollBarThickness = 4
-    page.ScrollBarImageColor3 = parent.Parent and parent.Parent:FindFirstChildWhichIsA("UIStroke") and parent.Parent:FindFirstChildWhichIsA("UIStroke").Color or Color3.new(1,1,1)
+    page.ScrollBarImageColor3 = Color3.fromRGB(160, 110, 255)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
     page.CanvasSize = UDim2.new(0, 0, 0, 0)
     page.Visible = false
     page.ZIndex = 11
+
+    local scale = Instance.new("UIScale", page)
+    scale.Name = "PageScale"
+    scale.Scale = 0.98
 
     local layout = Instance.new("UIListLayout", page)
     layout.Padding = UDim.new(0, 8)
@@ -288,7 +393,7 @@ function UI.CreatePage(parent)
     return page
 end
 
-function UI.CreateTabButton(parent, theme, name)
+function UI.CreateTabButton(parent, theme, name, icon)
     local b = Instance.new("TextButton", parent)
     b.Size = UDim2.new(1, 0, 0, 42)
     b.BackgroundColor3 = theme.Card
@@ -312,10 +417,20 @@ function UI.CreateTabButton(parent, theme, name)
     bar.ZIndex = 13
     corner(bar, 1)
 
+    local ico = Instance.new("TextLabel", b)
+    ico.BackgroundTransparency = 1
+    ico.Position = UDim2.new(0, 10, 0, 0)
+    ico.Size = UDim2.new(0, 20, 1, 0)
+    ico.Text = icon or "•"
+    ico.TextColor3 = theme.Dim
+    ico.Font = Enum.Font.GothamBold
+    ico.TextSize = 14
+    ico.ZIndex = 13
+
     local lbl = Instance.new("TextLabel", b)
     lbl.BackgroundTransparency = 1
-    lbl.Position = UDim2.new(0, 14, 0, 0)
-    lbl.Size = UDim2.new(1, -28, 1, 0)
+    lbl.Position = UDim2.new(0, 34, 0, 0)
+    lbl.Size = UDim2.new(1, -40, 1, 0)
     lbl.Text = name
     lbl.TextColor3 = theme.Dim
     lbl.Font = Enum.Font.GothamSemibold
@@ -323,11 +438,33 @@ function UI.CreateTabButton(parent, theme, name)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.ZIndex = 13
 
+    local function refresh()
+        stroke.Color = theme.Accent
+        bar.BackgroundColor3 = theme.Accent
+    end
+
+    UI.RegisterRefresher(refresh)
+    refresh()
+
+    b.MouseEnter:Connect(function()
+        TweenService:Create(b, TweenInfo.new(0.12, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = Color3.fromRGB(18, 14, 32)
+        }):Play()
+    end)
+
+    b.MouseLeave:Connect(function()
+        TweenService:Create(b, TweenInfo.new(0.12, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = theme.Card
+        }):Play()
+    end)
+
     return {
         Button = b,
         Label = lbl,
         Stroke = stroke,
         Bar = bar,
+        Icon = ico,
+        Refresh = refresh,
     }
 end
 
@@ -360,6 +497,17 @@ function UI.CreateSection(parent, theme, text, sub)
         sl.TextXAlignment = Enum.TextXAlignment.Left
         sl.ZIndex = 13
     end
+
+    local ln = Instance.new("Frame", f)
+    ln.Size = UDim2.new(1, 0, 0, 1)
+    ln.Position = UDim2.new(0, 0, 1, -1)
+    ln.BackgroundColor3 = theme.Accent
+    ln.BackgroundTransparency = 0.75
+    ln.BorderSizePixel = 0
+    ln.ZIndex = 13
+
+    UI.TrackAccent(ln, "BackgroundColor3")
+    return f
 end
 
 local function mkCard(parent, theme, height)
@@ -375,7 +523,113 @@ local function mkCard(parent, theme, height)
     st.Thickness = 1.1
     st.Transparency = 0.55
 
+    UI.TrackAccent(st, "Color")
     return card, st
+end
+
+function UI.CreateLabel(parent, theme, label, color, desc)
+    local card = Instance.new("Frame", parent)
+    card.Size = UDim2.new(1, 0, 0, desc and 44 or 34)
+    card.BackgroundColor3 = theme.Card
+    card.BorderSizePixel = 0
+    card.ZIndex = 12
+    corner(card, 12)
+
+    local st = Instance.new("UIStroke", card)
+    st.Color = color or theme.Accent
+    st.Thickness = 1.1
+    st.Transparency = 0.65
+
+    local txt = Instance.new("TextLabel", card)
+    txt.BackgroundTransparency = 1
+    txt.Position = UDim2.new(0, 14, 0, desc and 6 or 0)
+    txt.Size = UDim2.new(1, -28, 0, 18)
+    txt.Text = label
+    txt.TextColor3 = color or theme.Text
+    txt.Font = Enum.Font.GothamSemibold
+    txt.TextSize = 12
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.ZIndex = 13
+
+    if desc then
+        local d = Instance.new("TextLabel", card)
+        d.BackgroundTransparency = 1
+        d.Position = UDim2.new(0, 14, 0, 22)
+        d.Size = UDim2.new(1, -28, 0, 14)
+        d.Text = desc
+        d.TextColor3 = theme.Dim
+        d.Font = Enum.Font.Gotham
+        d.TextSize = 10
+        d.TextXAlignment = Enum.TextXAlignment.Left
+        d.ZIndex = 13
+    end
+
+    return card
+end
+
+function UI.CreateDivider(parent, theme, color)
+    local f = Instance.new("Frame", parent)
+    f.Size = UDim2.new(1, 0, 0, 1)
+    f.BackgroundColor3 = color or theme.Accent
+    f.BackgroundTransparency = 0.7
+    f.BorderSizePixel = 0
+    f.ZIndex = 12
+    UI.TrackAccent(f, "BackgroundColor3")
+    return f
+end
+
+function UI.CreateButton(parent, theme, label, desc, callback, col)
+    local card, _ = mkCard(parent, theme, desc and 52 or 42)
+
+    local btn = Instance.new("TextButton", card)
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.ZIndex = 15
+
+    local top = Instance.new("TextLabel", card)
+    top.BackgroundTransparency = 1
+    top.Position = UDim2.new(0, 14, 0, desc and 7 or 12)
+    top.Size = UDim2.new(1, -28, 0, 18)
+    top.Text = label
+    top.TextColor3 = col or theme.Text
+    top.Font = Enum.Font.GothamSemibold
+    top.TextSize = 13
+    top.TextXAlignment = Enum.TextXAlignment.Left
+    top.ZIndex = 13
+
+    if desc then
+        local d = Instance.new("TextLabel", card)
+        d.BackgroundTransparency = 1
+        d.Position = UDim2.new(0, 14, 0, 24)
+        d.Size = UDim2.new(1, -28, 0, 14)
+        d.Text = desc
+        d.TextColor3 = theme.Dim
+        d.Font = Enum.Font.Gotham
+        d.TextSize = 10
+        d.TextXAlignment = Enum.TextXAlignment.Left
+        d.ZIndex = 13
+    end
+
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(card, TweenInfo.new(0.12, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = Color3.fromRGB(20, 16, 34)
+        }):Play()
+    end)
+
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(card, TweenInfo.new(0.12, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = theme.Card
+        }):Play()
+    end)
+
+    btn.MouseButton1Click:Connect(function()
+        UI.PlayClickSound(card, UI.ClickSoundsEnabled)
+        if callback then callback() end
+    end)
+
+    return card
 end
 
 function UI.CreateToggle(parent, theme, label, desc, get, set)
@@ -443,17 +697,31 @@ function UI.CreateToggle(parent, theme, label, desc, get, set)
         end
     end
 
+    click.MouseEnter:Connect(function()
+        TweenService:Create(card, TweenInfo.new(0.12, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = Color3.fromRGB(18, 14, 32)
+        }):Play()
+    end)
+
+    click.MouseLeave:Connect(function()
+        TweenService:Create(card, TweenInfo.new(0.12, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = theme.Card
+        }):Play()
+    end)
+
     click.MouseButton1Click:Connect(function()
+        UI.PlayClickSound(card, UI.ClickSoundsEnabled)
         set(not get())
         refresh()
     end)
 
     refresh()
+    UI.RegisterRefresher(refresh)
     return refresh
 end
 
 function UI.CreateSlider(parent, theme, label, min, max, default, set)
-    local card = mkCard(parent, theme, 56)
+    local card, _ = mkCard(parent, theme, 56)
 
     local title = Instance.new("TextLabel", card)
     title.BackgroundTransparency = 1
@@ -541,48 +809,269 @@ function UI.CreateSlider(parent, theme, label, min, max, default, set)
     knob.Position = UDim2.new(ratio, -7, 0.5, -7)
     set(default)
 
+    local function refresh()
+        fill.BackgroundColor3 = theme.Accent
+        valLbl.TextColor3 = theme.Accent
+    end
+    refresh()
+    UI.RegisterRefresher(refresh)
+
     return card
 end
 
-function UI.CreateButton(parent, theme, label, desc, callback, col)
-    local card, _ = mkCard(parent, theme, desc and 52 or 42)
+function UI.CreateTextBox(parent, theme, label, placeholder, defaultText, callback)
+    local card, _ = mkCard(parent, theme, 50)
 
-    local btn = Instance.new("TextButton", card)
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.AutoButtonColor = false
-    btn.ZIndex = 15
+    local lbl = Instance.new("TextLabel", card)
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 14, 0, 8)
+    lbl.Size = UDim2.new(0.45, 0, 0, 18)
+    lbl.Text = label
+    lbl.TextColor3 = theme.Text
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 13
 
-    local top = Instance.new("TextLabel", card)
-    top.BackgroundTransparency = 1
-    top.Position = UDim2.new(0, 14, 0, desc and 7 or 12)
-    top.Size = UDim2.new(1, -28, 0, 18)
-    top.Text = label
-    top.TextColor3 = col or theme.Text
-    top.Font = Enum.Font.GothamSemibold
-    top.TextSize = 13
-    top.TextXAlignment = Enum.TextXAlignment.Left
-    top.ZIndex = 13
+    local box = Instance.new("TextBox", card)
+    box.Size = UDim2.new(0.52, -16, 0, 26)
+    box.Position = UDim2.new(0.48, 0, 0.5, -13)
+    box.BackgroundColor3 = theme.Card2
+    box.Text = defaultText or ""
+    box.PlaceholderText = placeholder or ""
+    box.TextColor3 = theme.Text
+    box.PlaceholderColor3 = theme.Dim
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 12
+    box.ClearTextOnFocus = false
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.ZIndex = 14
+    corner(box, 8)
 
-    if desc then
-        local d = Instance.new("TextLabel", card)
-        d.BackgroundTransparency = 1
-        d.Position = UDim2.new(0, 14, 0, 24)
-        d.Size = UDim2.new(1, -28, 0, 14)
-        d.Text = desc
-        d.TextColor3 = theme.Dim
-        d.Font = Enum.Font.Gotham
-        d.TextSize = 10
-        d.TextXAlignment = Enum.TextXAlignment.Left
-        d.ZIndex = 13
-    end
+    local st = Instance.new("UIStroke", box)
+    st.Color = theme.Accent
+    st.Thickness = 1
+    st.Transparency = 0.6
+    UI.TrackAccent(st, "Color")
 
-    btn.MouseButton1Click:Connect(function()
-        if callback then callback() end
+    box.FocusLost:Connect(function()
+        if callback then
+            callback(box.Text)
+        end
     end)
 
-    return card
+    box.Focused:Connect(function()
+        box.BackgroundColor3 = Color3.fromRGB(26, 22, 40)
+        st.Transparency = 0.25
+    end)
+
+    box.FocusLost:Connect(function()
+        box.BackgroundColor3 = theme.Card2
+        st.Transparency = 0.6
+    end)
+
+    return card, box
+end
+
+function UI.CreateDropdown(parent, theme, label, options, default, callback)
+    local screen = parent:FindFirstAncestorOfClass("ScreenGui") or CoreGui
+
+    local card, _ = mkCard(parent, theme, 46)
+
+    local lbl = Instance.new("TextLabel", card)
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 14, 0, 0)
+    lbl.Size = UDim2.new(0.48, 0, 1, 0)
+    lbl.Text = label
+    lbl.TextColor3 = theme.Text
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 13
+
+    local btn = Instance.new("TextButton", card)
+    btn.Size = UDim2.new(0, 180, 0, 28)
+    btn.Position = UDim2.new(1, -194, 0.5, -14)
+    btn.BackgroundColor3 = theme.Card2
+    btn.Text = tostring(default or options[1] or "None") .. " ▾"
+    btn.TextColor3 = theme.Accent
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 11
+    btn.AutoButtonColor = false
+    btn.ZIndex = 14
+    corner(btn, 8)
+
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Color = theme.Accent
+    stroke.Thickness = 1
+    stroke.Transparency = 0.55
+    UI.TrackAccent(stroke, "Color")
+
+    local ddFrame = Instance.new("Frame", screen)
+    ddFrame.Visible = false
+    ddFrame.BackgroundColor3 = Color3.fromRGB(10, 8, 16)
+    ddFrame.BorderSizePixel = 0
+    ddFrame.ZIndex = 8000
+    corner(ddFrame, 10)
+
+    local ddStroke = Instance.new("UIStroke", ddFrame)
+    ddStroke.Color = theme.Accent
+    ddStroke.Thickness = 1.2
+    ddStroke.Transparency = 0.25
+    UI.TrackAccent(ddStroke, "Color")
+
+    local ddScroll = Instance.new("ScrollingFrame", ddFrame)
+    ddScroll.Size = UDim2.new(1, -8, 1, -8)
+    ddScroll.Position = UDim2.new(0, 4, 0, 4)
+    ddScroll.BackgroundTransparency = 1
+    ddScroll.BorderSizePixel = 0
+    ddScroll.ScrollBarThickness = 3
+    ddScroll.ScrollBarImageColor3 = theme.Accent
+    ddScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    ddScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    ddScroll.ZIndex = 8001
+
+    local ddLayout = Instance.new("UIListLayout", ddScroll)
+    ddLayout.Padding = UDim.new(0, 3)
+
+    local ddPad = Instance.new("UIPadding", ddScroll)
+    ddPad.PaddingTop = UDim.new(0, 2)
+    ddPad.PaddingBottom = UDim.new(0, 2)
+
+    local current = default or options[1] or "None"
+
+    local function rebuild(opts)
+        for _, c in ipairs(ddScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+
+        for _, opt in ipairs(opts) do
+            local ob = Instance.new("TextButton", ddScroll)
+            ob.Size = UDim2.new(1, 0, 0, 28)
+            ob.BackgroundColor3 = Color3.fromRGB(24, 19, 36)
+            ob.Text = tostring(opt)
+            ob.TextColor3 = theme.Text
+            ob.Font = Enum.Font.GothamSemibold
+            ob.TextSize = 11
+            ob.AutoButtonColor = false
+            ob.ZIndex = 8002
+            corner(ob, 7)
+
+            ob.MouseEnter:Connect(function()
+                TweenService:Create(ob, TweenInfo.new(0.08, Enum.EasingStyle.Quart), {
+                    BackgroundColor3 = theme.Accent
+                }):Play()
+                ob.TextColor3 = Color3.new(1, 1, 1)
+            end)
+
+            ob.MouseLeave:Connect(function()
+                TweenService:Create(ob, TweenInfo.new(0.08, Enum.EasingStyle.Quart), {
+                    BackgroundColor3 = Color3.fromRGB(24, 19, 36)
+                }):Play()
+                ob.TextColor3 = theme.Text
+            end)
+
+            ob.MouseButton1Click:Connect(function()
+                UI.PlayClickSound(ob, UI.ClickSoundsEnabled)
+                current = tostring(opt)
+                btn.Text = current .. " ▾"
+                ddFrame.Visible = false
+                if callback then callback(current) end
+            end)
+        end
+    end
+
+    rebuild(options)
+
+    btn.MouseButton1Click:Connect(function()
+        UI.PlayClickSound(btn, UI.ClickSoundsEnabled)
+
+        if ddFrame.Visible then
+            ddFrame.Visible = false
+            return
+        end
+
+        local abs = btn.AbsolutePosition
+        ddFrame.Size = UDim2.new(0, 194, 0, math.min(#options * 31 + 8, 220))
+        ddFrame.Position = UDim2.new(0, abs.X, 0, abs.Y + 32)
+        ddFrame.Visible = true
+    end)
+
+    return {
+        Frame = ddFrame,
+        Rebuild = rebuild,
+        SetValue = function(v)
+            current = tostring(v)
+            btn.Text = current .. " ▾"
+            if callback then callback(current) end
+        end
+    }
+end
+
+function UI.CreateKeybind(parent, theme, label, defaultKey, callback)
+    local card, _ = mkCard(parent, theme, 46)
+
+    local lbl = Instance.new("TextLabel", card)
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 14, 0, 0)
+    lbl.Size = UDim2.new(0.55, 0, 1, 0)
+    lbl.Text = label
+    lbl.TextColor3 = theme.Text
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 13
+
+    local kb = Instance.new("TextButton", card)
+    kb.Size = UDim2.new(0, 112, 0, 28)
+    kb.Position = UDim2.new(1, -126, 0.5, -14)
+    kb.BackgroundColor3 = theme.Card2
+    kb.Text = defaultKey and ("[ " .. defaultKey.Name .. " ]") or "[ None ]"
+    kb.TextColor3 = theme.Accent
+    kb.Font = Enum.Font.GothamBold
+    kb.TextSize = 11
+    kb.AutoButtonColor = false
+    kb.ZIndex = 14
+    corner(kb, 8)
+
+    local stroke = Instance.new("UIStroke", kb)
+    stroke.Color = theme.Accent
+    stroke.Thickness = 1
+    stroke.Transparency = 0.55
+    UI.TrackAccent(stroke, "Color")
+
+    local waiting = false
+    local conn
+
+    kb.MouseButton1Click:Connect(function()
+        UI.PlayClickSound(kb, UI.ClickSoundsEnabled)
+        if waiting then return end
+        waiting = true
+        kb.Text = "[ ... ]"
+        kb.TextColor3 = theme.Yellow
+
+        if conn then conn:Disconnect() end
+        conn = UIS.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+            conn:Disconnect()
+            conn = nil
+            waiting = false
+
+            local key = input.KeyCode
+            kb.Text = key == Enum.KeyCode.Unknown and "[ None ]" or ("[ " .. key.Name .. " ]")
+            kb.TextColor3 = theme.Accent
+            if callback then callback(key) end
+        end)
+    end)
+
+    return {
+        SetKey = function(key)
+            kb.Text = key == Enum.KeyCode.Unknown and "[ None ]" or ("[ " .. key.Name .. " ]")
+            if callback then callback(key) end
+        end
+    }
 end
 
 return UI
